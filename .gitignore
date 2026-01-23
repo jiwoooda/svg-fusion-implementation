@@ -52,6 +52,9 @@ wandb/
 # macOS
 .DS_Store
 
+# Claude Code
+.claude/
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
