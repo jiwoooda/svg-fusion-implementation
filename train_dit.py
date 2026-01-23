@@ -148,7 +148,7 @@ def train_dit(args):
             
             # Classifier-Free Guidance (CFG) dropout
             if torch.rand(1).item() < args.cfg_dropout:
-                # 25% 확률로 텍스트 컨텍스트를 0으로
+                # 10% 확률로 텍스트 컨텍스트를 0으로 (논문 기준)
                 text_context = torch.zeros_like(text_context)
             
             # Timestep 샘플링
@@ -233,7 +233,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
     parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay')
     parser.add_argument('--clip_grad_norm', type=float, default=1.0, help='Gradient clipping')
-    parser.add_argument('--cfg_dropout', type=float, default=0.25, help='CFG dropout probability')
+    parser.add_argument('--cfg_dropout', type=float, default=0.10, help='CFG dropout probability (10% per paper)')
     
     # 기타
     parser.add_argument('--num_workers', type=int, default=4, help='DataLoader workers')

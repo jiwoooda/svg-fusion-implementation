@@ -122,16 +122,17 @@ def generate_svg(args):
         print("Decoding latents to SVG tensors...")
         
         # VAE 디코딩
-        outputs = vae.decode(latents, latent_mask)
-        
+        outputs = vae.decode(latents)
+
         # 텐서를 SVG 파일로 변환
         print(f"Saving SVG files to {output_dir}...")
-        
+
         for i in range(args.num_samples):
             # 각 예측에서 가장 높은 확률의 값 선택
             element_ids = outputs['element_logits'][i].argmax(dim=-1)  # [L]
             command_ids = outputs['command_logits'][i].argmax(dim=-1)  # [L]
-            param_values = outputs['param_logits'][i].round().clamp(0, 255).long()  # [L, 12]
+            # param_logits: [B, L, 12, 256] -> argmax -> [L, 12]
+            param_values = outputs['param_logits'][i].argmax(dim=-1)  # [L, 12]
             
             # SVG 텐서 구성
             svg_tensor = torch.cat([

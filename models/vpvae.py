@@ -199,41 +199,140 @@ class VPVAE(nn.Module):
                  encoder_layers=4, decoder_layers=4,
                  num_heads=8, latent_dim=128, max_seq_len=1024):
         super().__init__()
-        
+
+        self.num_continuous_params = num_continuous_params
+        self.latent_dim = latent_dim
+
         self.encoder = VPVAEEncoder(
             num_element_types, num_command_types,
             element_embed_dim, command_embed_dim,
             num_continuous_params, pixel_feature_dim,
             encoder_d_model, encoder_layers, num_heads, latent_dim
         )
-        
+
         self.decoder = VPVAEDecoder(
             num_element_types, num_command_types,
             num_continuous_params, latent_dim, decoder_d_model,
             decoder_layers, num_heads
         )
-        
+
         self.max_seq_len = max_seq_len
-    
+
     def reparameterize(self, mu, log_var):
         """재파라미터화 트릭"""
         std = torch.exp(0.5 * log_var)
         eps = torch.randn_like(std)
         return mu + eps * std
-    
-    def forward(self, svg_matrix, pixel_embedding, svg_mask=None):
+
+    def compute_kl_loss(self, mu, log_var, mask=None):
+        """
+        KL divergence loss: D_KL(q(z|x) || N(0,I))
+        논문 수식: L_KL = -0.5 * sum(1 + log(σ²) - μ² - σ²)
+        """
+        kl = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())
+
+        if mask is not None:
+            # 마스크 적용 (valid positions만 계산)
+            valid_mask = (~mask).unsqueeze(-1).float()
+            kl = kl * valid_mask
+            kl_loss = kl.sum() / valid_mask.sum()
+        else:
+            kl_loss = kl.mean()
+
+        return kl_loss
+
+    def _build_svg_matrix(self, svg_element_ids, svg_command_ids, svg_continuous_params):
+        """입력을 svg_matrix 형태로 결합"""
+        # [B, L, 2 + num_params]
+        return torch.cat([
+            svg_element_ids.unsqueeze(-1),
+            svg_command_ids.unsqueeze(-1),
+            svg_continuous_params
+        ], dim=-1)
+
+    def forward(self, svg_element_ids, svg_command_ids, svg_continuous_params,
+                pixel_features, svg_mask=None):
         """
         전방향 전파
+
+        Args:
+            svg_element_ids: [B, L] - element type ids
+            svg_command_ids: [B, L] - command type ids
+            svg_continuous_params: [B, L, 12] - quantized continuous parameters
+            pixel_features: [B, L, D_pixel] - DINOv2 pixel embeddings
+            svg_mask: [B, L] - True=padding
+
+        Returns:
+            dict with 'element_logits', 'command_logits', 'param_logits',
+                      'mu', 'log_var', 'kl_loss'
         """
+        # SVG matrix 구성
+        svg_matrix = self._build_svg_matrix(
+            svg_element_ids, svg_command_ids, svg_continuous_params
+        )
+
         # 인코딩
-        mu, log_var = self.encoder(svg_matrix, pixel_embedding, svg_mask)
-        
+        mu, log_var = self.encoder(svg_matrix, pixel_features, svg_mask)
+
+        # KL Loss 계산
+        kl_loss = self.compute_kl_loss(mu, log_var, svg_mask)
+
         # 재파라미터화
         z = self.reparameterize(mu, log_var)
-        
+
         # 디코딩
         element_logits, command_logits, param_logits = self.decoder(
-            z, target_len=self.max_seq_len
+            z, target_len=z.size(1)
         )
-        
-        return element_logits, command_logits, param_logits, mu, log_var
+
+        # param_logits를 텐서로 스택 [B, L, num_params, 256] -> [B, L, 12] (argmax 후)
+        # 또는 학습 시에는 [B, L, 12, 256] 형태로 반환
+        param_logits_stacked = torch.stack(param_logits, dim=2)  # [B, L, 12, 256]
+
+        return {
+            'element_logits': element_logits,      # [B, L, num_element_types]
+            'command_logits': command_logits,      # [B, L, num_command_types]
+            'param_logits': param_logits_stacked,  # [B, L, 12, 256]
+            'mu': mu,                              # [B, L, latent_dim]
+            'log_var': log_var,                    # [B, L, latent_dim]
+            'kl_loss': kl_loss                     # scalar
+        }
+
+    def encode(self, svg_element_ids, svg_command_ids, svg_continuous_params,
+               pixel_features, svg_mask=None):
+        """
+        인코딩만 수행 (DiT 훈련용)
+
+        Returns:
+            z: [B, L, latent_dim] - sampled latent
+        """
+        svg_matrix = self._build_svg_matrix(
+            svg_element_ids, svg_command_ids, svg_continuous_params
+        )
+
+        mu, log_var = self.encoder(svg_matrix, pixel_features, svg_mask)
+        z = self.reparameterize(mu, log_var)
+
+        return z
+
+    def decode(self, z):
+        """
+        디코딩만 수행 (생성용)
+
+        Args:
+            z: [B, L, latent_dim]
+
+        Returns:
+            dict with decoded outputs
+        """
+        element_logits, command_logits, param_logits = self.decoder(
+            z, target_len=z.size(1)
+        )
+
+        param_logits_stacked = torch.stack(param_logits, dim=2)
+
+        return {
+            'element_logits': element_logits,
+            'command_logits': command_logits,
+            'param_logits': param_logits_stacked
+        }

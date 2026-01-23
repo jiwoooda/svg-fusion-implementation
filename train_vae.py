@@ -132,12 +132,18 @@ def train_vae(args):
             cmd_loss = (cmd_loss * valid_positions.reshape(-1).float()).sum() / valid_positions.sum()
             recon_loss += cmd_loss
             
-            # Continuous params loss (MSE on quantized values)
-            cont_loss = nn.functional.mse_loss(
-                outputs['param_logits'],
-                continuous_params.float(),
+            # Continuous params loss (CrossEntropy on quantized bins)
+            # param_logits: [B, L, 12, 256], continuous_params: [B, L, 12]
+            B, L, num_params, num_bins = outputs['param_logits'].shape
+            param_logits_flat = outputs['param_logits'].reshape(-1, num_bins)  # [B*L*12, 256]
+            params_target_flat = continuous_params.reshape(-1).long()  # [B*L*12]
+
+            cont_loss = nn.functional.cross_entropy(
+                param_logits_flat,
+                params_target_flat,
                 reduction='none'
-            ).mean(dim=-1)  # [B, L]
+            )  # [B*L*12]
+            cont_loss = cont_loss.reshape(B, L, num_params).mean(dim=-1)  # [B, L]
             cont_loss = (cont_loss * valid_positions.float()).sum() / valid_positions.sum()
             recon_loss += cont_loss
             
