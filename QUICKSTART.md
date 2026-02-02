@@ -20,6 +20,8 @@ python scripts/create_dummy_data.py --output_dir data/svgs --num_samples 50
 python scripts/download_twemoji.py --output_dir data/twemoji_svg
 ```
 
+Twemoji 파일명(코드포인트)을 유니코드 이름으로 변환해 간단한 캡션으로 사용합니다.
+
 ## 3) 스모크 테스트 파이프라인
 
 ### preprocess

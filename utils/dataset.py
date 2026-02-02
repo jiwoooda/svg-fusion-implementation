@@ -5,6 +5,7 @@
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
+import unicodedata
 from PIL import Image
 import cairosvg
 from io import BytesIO
@@ -131,7 +132,7 @@ class SVGDataset(Dataset):
 
         # 캡션
         filename_stem = svg_path.stem
-        caption = self.captions_dict.get(filename_stem, filename_stem)
+        caption = self.captions_dict.get(filename_stem, self._caption_from_filename(filename_stem))
 
         return {
             'svg_tensor': svg_tensor,
@@ -140,6 +141,36 @@ class SVGDataset(Dataset):
             'caption': caption,
             'filename': filename_stem
         }
+
+    @staticmethod
+    def _caption_from_filename(stem: str) -> str:
+        """
+        Twemoji-style filename (e.g., "1f600" or "1f1fa-1f1f8") -> human-readable caption.
+        Falls back to the stem if decoding fails.
+        """
+        parts = stem.split('-')
+        chars = []
+        try:
+            for p in parts:
+                if not p:
+                    continue
+                code = int(p, 16)
+                chars.append(chr(code))
+        except Exception:
+            return stem
+
+        if not chars:
+            return stem
+
+        names = []
+        for ch in chars:
+            try:
+                names.append(unicodedata.name(ch).lower())
+            except ValueError:
+                names.append("emoji")
+
+        # simple, readable caption
+        return " ".join(names)
 
 
 def collate_fn(batch):

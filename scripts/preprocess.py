@@ -12,6 +12,7 @@ import cairosvg
 from transformers import AutoImageProcessor, AutoModel
 
 from utils.svg_parser import SVGToTensor
+import unicodedata
 
 
 def set_seed(seed: int):
@@ -52,6 +53,30 @@ def svg_to_image(svg_path: Path, image_size: int) -> Image.Image:
     )
     png_buffer.seek(0)
     return Image.open(png_buffer).convert("RGB")
+
+
+def caption_from_filename(stem: str) -> str:
+    parts = stem.split("-")
+    chars = []
+    try:
+        for p in parts:
+            if not p:
+                continue
+            code = int(p, 16)
+            chars.append(chr(code))
+    except Exception:
+        return stem
+
+    if not chars:
+        return stem
+
+    names = []
+    for ch in chars:
+        try:
+            names.append(unicodedata.name(ch).lower())
+        except ValueError:
+            names.append("emoji")
+    return " ".join(names)
 
 
 def main():
@@ -122,6 +147,7 @@ def main():
                 "element_row_counts_for_stages": None,
                 "svg_path": str(svg_path),
                 "filename": svg_path.stem,
+                "caption": caption_from_filename(svg_path.stem),
             }
             torch.save(payload, out_path)
             saved += 1
