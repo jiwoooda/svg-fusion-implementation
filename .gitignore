@@ -58,3 +58,5 @@ wandb/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+# local-only folders
+/aiv-au/
