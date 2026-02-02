@@ -55,7 +55,21 @@ def train_vae(args):
     config.max_seq_len = args.max_seq_len
     config.pixel_embed_dim = dataset.dino_embed_dim
     
-    vae = VPVAE(config).to(device)
+    vae = VPVAE(
+        num_element_types=config.num_element_types,
+        num_command_types=config.num_command_types,
+        element_embed_dim=config.element_embed_dim,
+        command_embed_dim=config.command_embed_dim,
+        num_continuous_params=config.num_continuous_params,
+        pixel_feature_dim=config.pixel_embed_dim,
+        encoder_d_model=config.encoder_d_model,
+        decoder_d_model=config.decoder_d_model,
+        encoder_layers=config.encoder_layers,
+        decoder_layers=config.decoder_layers,
+        num_heads=config.num_heads,
+        latent_dim=config.latent_dim,
+        max_seq_len=config.max_seq_len
+    ).to(device)
     
     total_params = sum(p.numel() for p in vae.parameters())
     trainable_params = sum(p.numel() for p in vae.parameters() if p.requires_grad)
@@ -95,12 +109,12 @@ def train_vae(args):
             svg_tensor = batch['svg_tensor'].to(device)  # [B, L, 14]
             pixel_emb = batch['pixel_embedding'].to(device)  # [B, L, D]
             svg_mask = batch['svg_mask'].to(device)  # [B, L]
-            
+
             # SVG 텐서 분리
             element_ids = svg_tensor[:, :, 0]  # [B, L]
             command_ids = svg_tensor[:, :, 1]  # [B, L]
             continuous_params = svg_tensor[:, :, 2:]  # [B, L, 12]
-            
+
             # Forward
             outputs = vae(
                 svg_element_ids=element_ids,
@@ -109,52 +123,48 @@ def train_vae(args):
                 pixel_features=pixel_emb,
                 svg_mask=svg_mask
             )
-            
-            # Loss 계산
-            recon_loss = 0.0
-            valid_positions = ~svg_mask  # [B, L]
-            
-            # Element type loss
-            elem_loss = nn.functional.cross_entropy(
-                outputs['element_logits'].reshape(-1, outputs['element_logits'].size(-1)),
-                element_ids.reshape(-1),
-                reduction='none'
-            )
-            elem_loss = (elem_loss * valid_positions.reshape(-1).float()).sum() / valid_positions.sum()
-            recon_loss += elem_loss
-            
-            # Command type loss
-            cmd_loss = nn.functional.cross_entropy(
-                outputs['command_logits'].reshape(-1, outputs['command_logits'].size(-1)),
-                command_ids.reshape(-1),
-                reduction='none'
-            )
-            cmd_loss = (cmd_loss * valid_positions.reshape(-1).float()).sum() / valid_positions.sum()
-            recon_loss += cmd_loss
-            
-            # Continuous params loss (CrossEntropy on quantized bins)
-            # param_logits: [B, L, 12, 256], continuous_params: [B, L, 12]
-            B, L, num_params, num_bins = outputs['param_logits'].shape
-            param_logits_flat = outputs['param_logits'].reshape(-1, num_bins)  # [B*L*12, 256]
-            params_target_flat = continuous_params.reshape(-1).long()  # [B*L*12]
 
-            cont_loss = nn.functional.cross_entropy(
-                param_logits_flat,
-                params_target_flat,
+            # ---- Recon loss: masked MSE on continuous features ----
+            predicted = outputs['predicted_features']  # [B, L_out, F]
+
+            # 타겟을 [-1,1]로 정규화
+            target = vae.normalize_target(element_ids, command_ids, continuous_params)  # [B, L_tgt, F]
+
+            # effective length
+            L_out = predicted.size(1)
+            L_tgt = target.size(1)
+            effective_len = min(L_out, L_tgt)
+
+            preds_eff = predicted[:, :effective_len, :]
+            targets_eff = target[:, :effective_len, :]
+            mask_eff = svg_mask[:, :effective_len]  # [B, L]
+
+            # feature valid mask: [B, L, F]
+            feature_valid_mask = (~mask_eff).unsqueeze(-1).expand_as(targets_eff).float()
+            num_valid = feature_valid_mask.sum() + 1e-9
+
+            # masked MSE
+            mse_unreduced = nn.functional.mse_loss(
+                preds_eff * feature_valid_mask,
+                targets_eff * feature_valid_mask,
                 reduction='none'
-            )  # [B*L*12]
-            cont_loss = cont_loss.reshape(B, L, num_params).mean(dim=-1)  # [B, L]
-            cont_loss = (cont_loss * valid_positions.float()).sum() / valid_positions.sum()
-            recon_loss += cont_loss
-            
-            # KL divergence loss
+            )
+            mse_recon = mse_unreduced.sum() / num_valid
+
+            # ---- KL loss ----
             kl_loss = outputs['kl_loss']
-            
-            # KL annealing
-            kl_weight = min(1.0, (epoch * len(dataloader) + batch_idx) / (args.kl_warmup_steps))
-            
-            # Total loss
-            loss = recon_loss + kl_weight * kl_loss
+
+            # KL weight annealing: linear ramp over anneal_steps to kl_weight_max
+            global_step = epoch * len(dataloader) + batch_idx
+            anneal_steps = int(args.total_steps * args.kl_anneal_portion)
+            if global_step < anneal_steps:
+                kl_weight = args.kl_weight_max * global_step / max(1, anneal_steps)
+            else:
+                kl_weight = args.kl_weight_max
+
+            # ---- Total loss ----
+            loss = args.recon_mse_loss_weight * mse_recon + kl_weight * kl_loss
+            recon_loss = mse_recon  # for logging
             
             # Backward
             optimizer.zero_grad()
@@ -223,7 +233,10 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
     parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay')
     parser.add_argument('--clip_grad_norm', type=float, default=1.0, help='Gradient clipping')
-    parser.add_argument('--kl_warmup_steps', type=int, default=5000, help='KL warmup steps')
+    parser.add_argument('--total_steps', type=int, default=15000, help='Total training steps (for KL annealing)')
+    parser.add_argument('--kl_anneal_portion', type=float, default=0.5, help='Portion of total steps for KL annealing')
+    parser.add_argument('--kl_weight_max', type=float, default=0.5, help='Maximum KL weight')
+    parser.add_argument('--recon_mse_loss_weight', type=float, default=1.0, help='Recon MSE loss weight')
     
     # 기타
     parser.add_argument('--num_workers', type=int, default=4, help='DataLoader workers')

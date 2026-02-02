@@ -148,51 +148,45 @@ class VPVAEEncoder(nn.Module):
 
 
 class VPVAEDecoder(nn.Module):
-    """VP-VAE 디코더 - 잠재 벡터에서 SVG 복원"""
-    def __init__(self, num_element_types, num_command_types,
-                 num_continuous_params, latent_dim, d_model,
+    """VP-VAE 디코더 - 잠재 벡터에서 연속 SVG 특징 복원 (tanh)"""
+    def __init__(self, num_features, latent_dim, d_model,
                  num_layers, num_heads):
         super().__init__()
-        
+
         self.fc_latent = nn.Linear(latent_dim, d_model)
-        
+
         self.layers = nn.ModuleList([
             TransformerBlock(d_model, num_heads) for _ in range(num_layers)
         ])
-        
+
         self.norm = nn.LayerNorm(d_model)
-        
-        # 출력 헤드
-        self.element_head = nn.Linear(d_model, num_element_types)
-        self.command_head = nn.Linear(d_model, num_command_types)
-        self.param_heads = nn.ModuleList([
-            nn.Linear(d_model, 256) for _ in range(num_continuous_params)
-        ])
-    
+
+        # 연속 출력 헤드: [B, L, num_features] with tanh → [-1, 1]
+        self.output_projection = nn.Linear(d_model, num_features)
+
     def forward(self, z, target_len):
         """
         z: [B, L, latent_dim]
         target_len: 출력 시퀀스 길이
+
+        Returns:
+            predicted_continuous_svg_features: [B, L, F] in [-1, 1]
         """
         x = self.fc_latent(z)
-        
+
         # 트랜스포머
         for layer in self.layers:
             x = layer(x)
-        
+
         x = self.norm(x)
-        
-        # 출력
-        element_logits = self.element_head(x)
-        command_logits = self.command_head(x)
-        param_logits = [head(x) for head in self.param_heads]
-        
-        return element_logits, command_logits, param_logits
+
+        # 연속 출력 + tanh
+        return torch.tanh(self.output_projection(x))
 
 
 class VPVAE(nn.Module):
     """Vector-Pixel VAE"""
-    def __init__(self, num_element_types=7, num_command_types=14,
+    def __init__(self, num_element_types=7, num_command_types=13,
                  element_embed_dim=64, command_embed_dim=64,
                  num_continuous_params=12, pixel_feature_dim=384,
                  encoder_d_model=512, decoder_d_model=512,
@@ -201,7 +195,11 @@ class VPVAE(nn.Module):
         super().__init__()
 
         self.num_continuous_params = num_continuous_params
+        self.num_element_types = num_element_types
+        self.num_command_types = num_command_types
         self.latent_dim = latent_dim
+        # 디코더 출력 특징 수: elem_id + cmd_id + continuous_params
+        self.num_features = 2 + num_continuous_params
 
         self.encoder = VPVAEEncoder(
             num_element_types, num_command_types,
@@ -211,9 +209,11 @@ class VPVAE(nn.Module):
         )
 
         self.decoder = VPVAEDecoder(
-            num_element_types, num_command_types,
-            num_continuous_params, latent_dim, decoder_d_model,
-            decoder_layers, num_heads
+            num_features=self.num_features,
+            latent_dim=latent_dim,
+            d_model=decoder_d_model,
+            num_layers=decoder_layers,
+            num_heads=num_heads
         )
 
         self.max_seq_len = max_seq_len
@@ -227,17 +227,19 @@ class VPVAE(nn.Module):
     def compute_kl_loss(self, mu, log_var, mask=None):
         """
         KL divergence loss: D_KL(q(z|x) || N(0,I))
-        논문 수식: L_KL = -0.5 * sum(1 + log(σ²) - μ² - σ²)
+        수식: kl_div = -0.5 * sum(1 + logvar - mu^2 - exp(clamp(logvar, max=80)), dim=latent)
         """
-        kl = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())
+        logvar_clamped = torch.clamp(log_var, max=80.0)
+        # sum over latent dim → [B, L] (per-position KL) or [B] if no L
+        kl_per_position = -0.5 * (1 + log_var - mu.pow(2) - logvar_clamped.exp()).sum(dim=-1)
 
-        if mask is not None:
-            # 마스크 적용 (valid positions만 계산)
-            valid_mask = (~mask).unsqueeze(-1).float()
-            kl = kl * valid_mask
-            kl_loss = kl.sum() / valid_mask.sum()
+        if mask is not None and kl_per_position.dim() > 1:
+            # [B, L] with mask: average over valid positions
+            valid_mask = (~mask).float()  # [B, L]
+            kl_per_position = kl_per_position * valid_mask
+            kl_loss = kl_per_position.sum() / (valid_mask.sum() + 1e-9)
         else:
-            kl_loss = kl.mean()
+            kl_loss = kl_per_position.mean()
 
         return kl_loss
 
@@ -249,6 +251,50 @@ class VPVAE(nn.Module):
             svg_command_ids.unsqueeze(-1),
             svg_continuous_params
         ], dim=-1)
+
+    def normalize_target(self, svg_element_ids, svg_command_ids, svg_continuous_params):
+        """
+        SVG 정수 행렬을 [-1, 1] 연속 타겟으로 정규화
+
+        Args:
+            svg_element_ids: [B, L] (0 ~ num_element_types-1)
+            svg_command_ids: [B, L] (0 ~ num_command_types-1)
+            svg_continuous_params: [B, L, 12] (0 ~ 255)
+
+        Returns:
+            target_continuous: [B, L, F] in [-1, 1]
+        """
+        elem_norm = svg_element_ids.float() / max(self.num_element_types - 1, 1) * 2 - 1
+        cmd_norm = svg_command_ids.float() / max(self.num_command_types - 1, 1) * 2 - 1
+        params_norm = svg_continuous_params.float() / 255.0 * 2 - 1
+
+        return torch.cat([
+            elem_norm.unsqueeze(-1),
+            cmd_norm.unsqueeze(-1),
+            params_norm
+        ], dim=-1)  # [B, L, 2+12]
+
+    def denormalize_output(self, continuous_features):
+        """
+        [-1, 1] 연속 출력을 정수 인덱스로 역정규화
+
+        Args:
+            continuous_features: [B, L, F] in [-1, 1]
+
+        Returns:
+            element_ids: [B, L]
+            command_ids: [B, L]
+            continuous_params: [B, L, 12]
+        """
+        elem_cont = continuous_features[:, :, 0]
+        cmd_cont = continuous_features[:, :, 1]
+        params_cont = continuous_features[:, :, 2:]
+
+        element_ids = ((elem_cont + 1) / 2 * (self.num_element_types - 1)).round().clamp(0, self.num_element_types - 1).long()
+        command_ids = ((cmd_cont + 1) / 2 * (self.num_command_types - 1)).round().clamp(0, self.num_command_types - 1).long()
+        continuous_params = ((params_cont + 1) / 2 * 255).round().clamp(0, 255).long()
+
+        return element_ids, command_ids, continuous_params
 
     def forward(self, svg_element_ids, svg_command_ids, svg_continuous_params,
                 pixel_features, svg_mask=None):
@@ -263,10 +309,9 @@ class VPVAE(nn.Module):
             svg_mask: [B, L] - True=padding
 
         Returns:
-            dict with 'element_logits', 'command_logits', 'param_logits',
-                      'mu', 'log_var', 'kl_loss'
+            dict with 'predicted_features', 'mu', 'log_var', 'kl_loss'
         """
-        # SVG matrix 구성
+        # SVG matrix 구성 (인코더 입력)
         svg_matrix = self._build_svg_matrix(
             svg_element_ids, svg_command_ids, svg_continuous_params
         )
@@ -280,40 +325,38 @@ class VPVAE(nn.Module):
         # 재파라미터화
         z = self.reparameterize(mu, log_var)
 
-        # 디코딩
-        element_logits, command_logits, param_logits = self.decoder(
-            z, target_len=z.size(1)
-        )
-
-        # param_logits를 텐서로 스택 [B, L, num_params, 256] -> [B, L, 12] (argmax 후)
-        # 또는 학습 시에는 [B, L, 12, 256] 형태로 반환
-        param_logits_stacked = torch.stack(param_logits, dim=2)  # [B, L, 12, 256]
+        # 디코딩 → 연속 특징 [B, L, F] in [-1, 1]
+        predicted_features = self.decoder(z, target_len=z.size(1))
 
         return {
-            'element_logits': element_logits,      # [B, L, num_element_types]
-            'command_logits': command_logits,      # [B, L, num_command_types]
-            'param_logits': param_logits_stacked,  # [B, L, 12, 256]
-            'mu': mu,                              # [B, L, latent_dim]
-            'log_var': log_var,                    # [B, L, latent_dim]
-            'kl_loss': kl_loss                     # scalar
+            'predicted_features': predicted_features,  # [B, L_out, F] in [-1,1]
+            'mu': mu,                                  # [B, L, latent_dim]
+            'log_var': log_var,                        # [B, L, latent_dim]
+            'kl_loss': kl_loss                         # scalar
         }
 
     def encode(self, svg_element_ids, svg_command_ids, svg_continuous_params,
-               pixel_features, svg_mask=None):
+               pixel_features, svg_mask=None, deterministic=False):
         """
-        인코딩만 수행 (DiT 훈련용)
+        인코딩만 수행 (DiT 훈련용 / latent 추출용)
+
+        Args:
+            deterministic: True이면 z=mu (샘플링 없음), False이면 reparameterize
 
         Returns:
-            z: [B, L, latent_dim] - sampled latent
+            z: [B, L, latent_dim]
         """
         svg_matrix = self._build_svg_matrix(
             svg_element_ids, svg_command_ids, svg_continuous_params
         )
 
         mu, log_var = self.encoder(svg_matrix, pixel_features, svg_mask)
-        z = self.reparameterize(mu, log_var)
 
-        return z
+        if deterministic:
+            return mu
+        else:
+            z = self.reparameterize(mu, log_var)
+            return z
 
     def decode(self, z):
         """
@@ -323,16 +366,6 @@ class VPVAE(nn.Module):
             z: [B, L, latent_dim]
 
         Returns:
-            dict with decoded outputs
+            predicted_features: [B, L, F] in [-1, 1]
         """
-        element_logits, command_logits, param_logits = self.decoder(
-            z, target_len=z.size(1)
-        )
-
-        param_logits_stacked = torch.stack(param_logits, dim=2)
-
-        return {
-            'element_logits': element_logits,
-            'command_logits': command_logits,
-            'param_logits': param_logits_stacked
-        }
+        return self.decoder(z, target_len=z.size(1))
