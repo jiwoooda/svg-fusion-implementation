@@ -104,6 +104,17 @@ python scripts/generate.py \
     --output_dir outputs
 ```
 
+### DiT 샘플링 (텍스트 조건)
+
+```bash
+python scripts/generate_dit.py \
+  --vae_ckpt /mnt/8TB_1/jiwoo/checkpoints/model_step300.pt \
+  --dit_ckpt /mnt/8TB_1/jiwoo/checkpoints/dit/vsdit_final.pt \
+  --prompt "a red circle" \
+  --num_samples 4 \
+  --out_dir /mnt/8TB_1/jiwoo/outputs
+```
+
 **?앹꽦???뚯씪:**
 ```
 outputs/

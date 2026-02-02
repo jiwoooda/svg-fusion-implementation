@@ -25,6 +25,7 @@ svg_fusion/
     preprocess.py         전처리 캐시 생성 (스모크 테스트용)
     train.py              스모크 테스트용 VAE 학습
     generate.py           재구성/랜덤 샘플 생성 (스모크 테스트용)
+    generate_dit.py       DiT+VAE 텍스트 조건 샘플링
     download_twemoji.py   Twemoji SVG 데이터 다운로드
     train_vae.py          VP-VAE 학습
     train_dit.py          VS-DiT 학습
@@ -122,6 +123,17 @@ python scripts/generate.py \
   --num_eval 10 \
   --num_samples 10 \
   --out_dir ./outputs
+```
+
+DiT 샘플링:
+
+```bash
+python scripts/generate_dit.py \
+  --vae_ckpt /mnt/8TB_1/jiwoo/checkpoints/model_step300.pt \
+  --dit_ckpt /mnt/8TB_1/jiwoo/checkpoints/dit/vsdit_final.pt \
+  --prompt "a red circle" \
+  --num_samples 4 \
+  --out_dir /mnt/8TB_1/jiwoo/outputs
 ```
 
 ## Loss 규격 (현재 코드 기준)
