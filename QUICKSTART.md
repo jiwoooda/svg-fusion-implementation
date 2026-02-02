@@ -1,51 +1,51 @@
 # SVG Fusion - Quick Start Guide
 
-5분 안에 SVG Fusion을 실행해보세요!
+5�??�에 SVG Fusion???�행?�보?�요!
 
-## 🚀 단계별 가이드
+## ?? ?�계�?가?�드
 
-### Step 1: 환경 설정 (1분)
+### Step 1: ?�경 ?�정 (1�?
 
 ```bash
-# 프로젝트 디렉토리로 이동
+# ?�로?�트 ?�렉?�리�??�동
 cd svg_fusion
 
-# 의존성 설치
+# ?�존???�치
 pip install -r requirements.txt
 ```
 
-**필요한 패키지:**
+**?�요???�키지:**
 - PyTorch >= 2.0.0
 - transformers >= 4.30.0
 - cairosvg >= 2.7.0
 - Pillow, numpy, tqdm
 
-### Step 2: 테스트 데이터 생성 (10초)
+### Step 2: ?�스???�이???�성 (10�?
 
 ```bash
-# 50개의 더미 SVG 파일 생성
-python create_dummy_data.py --output_dir data/svgs --num_samples 50
+# 50개의 ?��? SVG ?�일 ?�성
+python scripts/create_dummy_data.py --output_dir data/svgs --num_samples 50
 ```
 
-**생성되는 파일:**
-- `data/svgs/circle_*.svg` - 원 도형
-- `data/svgs/rect_*.svg` - 사각형
-- `data/svgs/ellipse_*.svg` - 타원
+**?�성?�는 ?�일:**
+- `data/svgs/circle_*.svg` - ???�형
+- `data/svgs/rect_*.svg` - ?�각??
+- `data/svgs/ellipse_*.svg` - ?�??
 - `data/svgs/path_*.svg` - 경로
-- `data/svgs/multi_*.svg` - 복합 도형
+- `data/svgs/multi_*.svg` - 복합 ?�형
 
-### Step 3: VAE 훈련 (10-30분)
+### Step 3: VAE ?�련 (10-30�?
 
 ```bash
-# 빠른 테스트 (10분, GPU)
-python train_vae.py \
+# 빠른 ?�스??(10�? GPU)
+python scripts/train_vae.py \
     --svg_dir data/svgs \
     --batch_size 8 \
     --num_epochs 10 \
     --output_dir checkpoints/vae
 
-# 더 나은 품질 (30분, GPU)
-python train_vae.py \
+# ???��? ?�질 (30�? GPU)
+python scripts/train_vae.py \
     --svg_dir data/svgs \
     --batch_size 8 \
     --num_epochs 30 \
@@ -53,7 +53,7 @@ python train_vae.py \
     --output_dir checkpoints/vae
 ```
 
-**훈련 진행 상황:**
+**?�련 진행 ?�황:**
 ```
 Epoch 1/10: loss=2.4531, recon=2.1234, kl=0.3297
 Epoch 2/10: loss=2.1245, recon=1.9123, kl=0.2122
@@ -61,19 +61,19 @@ Epoch 2/10: loss=2.1245, recon=1.9123, kl=0.2122
 Saved checkpoint: checkpoints/vae/vpvae_epoch10.pt
 ```
 
-### Step 4: DiT 훈련 (30-60분)
+### Step 4: DiT ?�련 (30-60�?
 
 ```bash
-# 빠른 테스트 (30분, GPU)
-python train_dit.py \
+# 빠른 ?�스??(30�? GPU)
+python scripts/train_dit.py \
     --svg_dir data/svgs \
     --vae_checkpoint checkpoints/vae/vpvae_final.pt \
     --batch_size 8 \
     --num_epochs 20 \
     --output_dir checkpoints/dit
 
-# 더 나은 품질 (60분, GPU)
-python train_dit.py \
+# ???��? ?�질 (60�? GPU)
+python scripts/train_dit.py \
     --svg_dir data/svgs \
     --vae_checkpoint checkpoints/vae/vpvae_final.pt \
     --batch_size 8 \
@@ -82,19 +82,19 @@ python train_dit.py \
     --output_dir checkpoints/dit
 ```
 
-### Step 5: SVG 생성 (10초)
+### Step 5: SVG ?�성 (10�?
 
 ```bash
-# 기본 생성
-python generate.py \
+# 기본 ?�성
+python scripts/generate.py \
     --vae_checkpoint checkpoints/vae/vpvae_final.pt \
     --dit_checkpoint checkpoints/dit/vsdit_final.pt \
     --prompt "a red circle" \
     --num_samples 4 \
     --output_dir outputs
 
-# 고품질 생성
-python generate.py \
+# 고품�??�성
+python scripts/generate.py \
     --vae_checkpoint checkpoints/vae/vpvae_final.pt \
     --dit_checkpoint checkpoints/dit/vsdit_final.pt \
     --prompt "a blue star with five points" \
@@ -104,49 +104,49 @@ python generate.py \
     --output_dir outputs
 ```
 
-**생성된 파일:**
+**?�성???�일:**
 ```
 outputs/
-├── a_red_circle_sample1.svg
-├── a_red_circle_sample2.svg
-├── a_red_circle_sample3.svg
-└── a_red_circle_sample4.svg
+?��??� a_red_circle_sample1.svg
+?��??� a_red_circle_sample2.svg
+?��??� a_red_circle_sample3.svg
+?��??� a_red_circle_sample4.svg
 ```
 
-## 📊 예상 소요 시간
+## ?�� ?�상 ?�요 ?�간
 
-| 단계 | CPU | GPU (RTX 3090) |
+| ?�계 | CPU | GPU (RTX 3090) |
 |------|-----|----------------|
-| 환경 설정 | 1분 | 1분 |
-| 데이터 생성 | 10초 | 10초 |
-| VAE 훈련 (10 epochs) | 2시간 | 10분 |
-| DiT 훈련 (20 epochs) | 4시간 | 30분 |
-| SVG 생성 | 1분 | 10초 |
-| **총합** | ~6시간 | ~40분 |
+| ?�경 ?�정 | 1�?| 1�?|
+| ?�이???�성 | 10�?| 10�?|
+| VAE ?�련 (10 epochs) | 2?�간 | 10�?|
+| DiT ?�련 (20 epochs) | 4?�간 | 30�?|
+| SVG ?�성 | 1�?| 10�?|
+| **총합** | ~6?�간 | ~40�?|
 
-## 🎯 빠른 테스트 (GPU 없이)
+## ?�� 빠른 ?�스??(GPU ?�이)
 
-GPU가 없다면 더 작은 설정으로 테스트:
+GPU가 ?�다�????��? ?�정?�로 ?�스??
 
 ```bash
-# 1. 더 적은 데이터
-python create_dummy_data.py --num_samples 10
+# 1. ???��? ?�이??
+python scripts/create_dummy_data.py --num_samples 10
 
-# 2. 작은 모델 (config.py 수정)
+# 2. ?��? 모델 (config.py ?�정)
 # encoder_d_model = 256
 # decoder_d_model = 256
 # encoder_layers = 2
 # decoder_layers = 2
 
-# 3. 작은 배치, 적은 에폭
-python train_vae.py \
+# 3. ?��? 배치, ?��? ?�폭
+python scripts/train_vae.py \
     --svg_dir data/svgs \
     --batch_size 2 \
     --num_epochs 5 \
     --max_seq_len 256 \
     --output_dir checkpoints/vae
 
-python train_dit.py \
+python scripts/train_dit.py \
     --svg_dir data/svgs \
     --vae_checkpoint checkpoints/vae/vpvae_final.pt \
     --batch_size 2 \
@@ -154,8 +154,8 @@ python train_dit.py \
     --max_seq_len 256 \
     --output_dir checkpoints/dit
 
-# 4. 생성
-python generate.py \
+# 4. ?�성
+python scripts/generate.py \
     --vae_checkpoint checkpoints/vae/vpvae_final.pt \
     --dit_checkpoint checkpoints/dit/vsdit_final.pt \
     --prompt "a red circle" \
@@ -163,47 +163,47 @@ python generate.py \
     --ddim_steps 50
 ```
 
-## 🔧 주요 파라미터
+## ?�� 주요 ?�라미터
 
-### 훈련 파라미터
+### ?�련 ?�라미터
 
-- `--batch_size`: 배치 크기 (GPU 메모리에 따라 조정)
-- `--num_epochs`: 에폭 수 (더 많을수록 좋음)
-- `--lr`: 학습률 (기본값: 1e-4)
-- `--max_seq_len`: 최대 시퀀스 길이 (메모리 영향)
+- `--batch_size`: 배치 ?�기 (GPU 메모리에 ?�라 조정)
+- `--num_epochs`: ?�폭 ??(??많을?�록 좋음)
+- `--lr`: ?�습�?(기본�? 1e-4)
+- `--max_seq_len`: 최�? ?�퀀??길이 (메모�??�향)
 
-### 생성 파라미터
+### ?�성 ?�라미터
 
 - `--cfg_scale`: CFG 강도 (7-15)
-  - 낮음: 다양성 ↑, 품질 ↓
-  - 높음: 다양성 ↓, 품질 ↑
+  - ??��: ?�양???? ?�질 ??
+  - ?�음: ?�양???? ?�질 ??
   
-- `--ddim_steps`: 샘플링 스텝 (50-250)
-  - 적음: 빠름, 품질 ↓
-  - 많음: 느림, 품질 ↑
+- `--ddim_steps`: ?�플�??�텝 (50-250)
+  - ?�음: 빠름, ?�질 ??
+  - 많음: ?�림, ?�질 ??
   
-- `--eta`: 확률성 (0-1)
-  - 0: 결정적
-  - 1: 확률적
+- `--eta`: ?�률??(0-1)
+  - 0: 결정??
+  - 1: ?�률??
 
-## 💡 유용한 팁
+## ?�� ?�용????
 
-### 1. 체크포인트 재개
+### 1. 체크?�인???�개
 
 ```bash
-# VAE 훈련 재개
-python train_vae.py \
+# VAE ?�련 ?�개
+python scripts/train_vae.py \
     --svg_dir data/svgs \
     --resume_from checkpoints/vae/vpvae_epoch10.pt \
     --num_epochs 20
 ```
 
-### 2. 생성 품질 개선
+### 2. ?�성 ?�질 개선
 
 ```bash
-# CFG 스케일 조정
+# CFG ?��???조정
 for cfg in 5 7 10 15; do
-    python generate.py \
+    python scripts/generate.py \
         --vae_checkpoint checkpoints/vae/vpvae_final.pt \
         --dit_checkpoint checkpoints/dit/vsdit_final.pt \
         --prompt "test prompt" \
@@ -213,10 +213,10 @@ for cfg in 5 7 10 15; do
 done
 ```
 
-### 3. 배치 생성
+### 3. 배치 ?�성
 
 ```bash
-# 여러 프롬프트에 대해 생성
+# ?�러 ?�롬?�트???�???�성
 prompts=(
     "a red circle"
     "a blue square"
@@ -225,7 +225,7 @@ prompts=(
 )
 
 for prompt in "${prompts[@]}"; do
-    python generate.py \
+    python scripts/generate.py \
         --vae_checkpoint checkpoints/vae/vpvae_final.pt \
         --dit_checkpoint checkpoints/dit/vsdit_final.pt \
         --prompt "$prompt" \
@@ -234,51 +234,51 @@ for prompt in "${prompts[@]}"; do
 done
 ```
 
-## 🐛 문제 해결
+## ?�� 문제 ?�결
 
 ### Out of Memory
 
 ```bash
-# 배치 크기 감소
+# 배치 ?�기 감소
 --batch_size 2
 
-# 시퀀스 길이 감소
+# ?�퀀??길이 감소
 --max_seq_len 256
 
 # Gradient accumulation
 --accumulation_steps 4
 ```
 
-### 훈련이 느림
+### ?�련???�림
 
 ```bash
-# Workers 증가
+# Workers 증�?
 --num_workers 8
 
-# 임베딩 캐싱 활성화
-# (dataset.py에서 cache_embeddings=True)
+# ?�베??캐싱 ?�성??
+# (dataset.py?�서 cache_embeddings=True)
 
 # Mixed precision (PyTorch 2.0+)
 --fp16
 ```
 
-### 생성 결과가 안 좋음
+### ?�성 결과가 ??좋음
 
-1. **더 많은 훈련 데이터**
-2. **더 긴 훈련** (50+ epochs)
-3. **CFG 스케일 조정** (7-15)
-4. **DDIM 스텝 증가** (100-250)
+1. **??많�? ?�련 ?�이??*
+2. **??�??�련** (50+ epochs)
+3. **CFG ?��???조정** (7-15)
+4. **DDIM ?�텝 증�?** (100-250)
 
-## 📚 다음 단계
+## ?�� ?�음 ?�계
 
-1. ✅ 빠른 시작 완료
-2. 📖 [README.md](README.md) 전체 문서 읽기
-3. 🎨 실제 SVG 데이터로 훈련
-4. 🔧 모델 아키텍처 커스터마이징
-5. 📊 결과 시각화 및 평가
+1. ??빠른 ?�작 ?�료
+2. ?�� [README.md](README.md) ?�체 문서 ?�기
+3. ?�� ?�제 SVG ?�이?�로 ?�련
+4. ?�� 모델 ?�키?�처 커스?�마?�징
+5. ?�� 결과 ?�각??�??��?
 
-## 🎉 축하합니다!
+## ?�� 축하?�니??
 
-SVG Fusion을 성공적으로 실행했습니다! 이제 텍스트에서 SVG를 생성할 수 있습니다.
+SVG Fusion???�공?�으�??�행?�습?�다! ?�제 ?�스?�에??SVG�??�성?????�습?�다.
 
-더 궁금한 점이 있으면 README.md를 참고하세요.
+??궁금???�이 ?�으�?README.md�?참고?�세??
