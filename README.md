@@ -25,6 +25,7 @@ svg_fusion/
     preprocess.py         전처리 캐시 생성 (스모크 테스트용)
     train.py              스모크 테스트용 VAE 학습
     generate.py           재구성/랜덤 샘플 생성 (스모크 테스트용)
+    download_twemoji.py   Twemoji SVG 데이터 다운로드
     train_vae.py          VP-VAE 학습
     train_dit.py          VS-DiT 학습
     train_demo.py         더미 데이터 데모 학습
@@ -51,11 +52,17 @@ pip install -r requirements.txt
 python scripts/create_dummy_data.py --output_dir data/svgs --num_samples 50
 ```
 
+Twemoji 데이터 다운로드(실제 데이터셋):
+
+```bash
+python scripts/download_twemoji.py --output_dir data/twemoji_svg
+```
+
 전처리 (SVG -> 캐시):
 
 ```bash
 python scripts/preprocess.py \
-  --svg_dir data/svgs \
+  --svg_dir data/twemoji_svg \
   --pattern "*.svg" \
   --precomputed_dir ./precomputed_patch_tokens_data \
   --max_files 300
