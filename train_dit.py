@@ -47,7 +47,21 @@ def train_dit(args):
     vae_config.max_seq_len = args.max_seq_len
     vae_config.pixel_embed_dim = dataset.dino_embed_dim
     
-    vae = VPVAE(vae_config).to(device)
+    vae = VPVAE(
+        num_element_types=vae_config.num_element_types,
+        num_command_types=vae_config.num_command_types,
+        element_embed_dim=vae_config.element_embed_dim,
+        command_embed_dim=vae_config.command_embed_dim,
+        num_continuous_params=vae_config.num_continuous_params,
+        pixel_feature_dim=vae_config.pixel_embed_dim,
+        encoder_d_model=vae_config.encoder_d_model,
+        decoder_d_model=vae_config.decoder_d_model,
+        encoder_layers=vae_config.encoder_layers,
+        decoder_layers=vae_config.decoder_layers,
+        num_heads=vae_config.num_heads,
+        latent_dim=vae_config.latent_dim,
+        max_seq_len=vae_config.max_seq_len
+    ).to(device)
     
     if args.vae_checkpoint:
         checkpoint = torch.load(args.vae_checkpoint, map_location=device)
@@ -74,17 +88,26 @@ def train_dit(args):
     dit_config.latent_dim = vae_config.latent_dim
     dit_config.context_dim = clip_text_encoder.config.hidden_size
     
-    dit = VSDiT(dit_config).to(device)
+    dit = VSDiT(
+        latent_dim=dit_config.latent_dim,
+        hidden_dim=dit_config.hidden_dim,
+        context_dim=dit_config.context_dim,
+        num_blocks=dit_config.num_blocks,
+        num_heads=dit_config.num_heads,
+        mlp_ratio=dit_config.mlp_ratio,
+        dropout=dit_config.dropout
+    ).to(device)
     
     total_params = sum(p.numel() for p in dit.parameters())
     print(f"DiT parameters: {total_params:,}")
     
     # Diffusion 유틸리티
-    diffusion = DiffusionUtils(
-        noise_steps=dit_config.noise_steps,
-        beta_start=dit_config.beta_start,
-        beta_end=dit_config.beta_end
+    betas = DiffusionUtils.get_linear_noise_schedule(
+        dit_config.noise_steps,
+        dit_config.beta_start,
+        dit_config.beta_end
     )
+    diff_params = DiffusionUtils.precompute_diffusion_parameters(betas, device)
     
     # Optimizer
     optimizer = optim.AdamW(
@@ -119,7 +142,7 @@ def train_dit(args):
             svg_mask = batch['svg_mask'].to(device)
             captions = batch['caption']
             
-            # 텍스트 임베딩
+            # 텍스트 임베딩 (conditional + unconditional for CFG)
             with torch.no_grad():
                 text_inputs = clip_tokenizer(
                     captions,
@@ -128,16 +151,29 @@ def train_dit(args):
                     max_length=77,
                     return_tensors="pt"
                 ).to(device)
-                
+
                 text_outputs = clip_text_encoder(**text_inputs)
-                text_context = text_outputs.last_hidden_state  # [B, seq_len, D]
-            
+                cond_context = text_outputs.last_hidden_state  # [B, seq_len, D]
+                cond_mask = ~(text_inputs.attention_mask.bool())  # True=pad
+
+                # Unconditional context: empty string CLIP encoding
+                uncond_inputs = clip_tokenizer(
+                    [""] * len(captions),
+                    padding='max_length',
+                    truncation=True,
+                    max_length=cond_context.size(1),
+                    return_tensors="pt"
+                ).to(device)
+                uncond_outputs = clip_text_encoder(**uncond_inputs)
+                uncond_context = uncond_outputs.last_hidden_state  # [B, seq_len, D]
+                uncond_mask = ~(uncond_inputs.attention_mask.bool())  # True=pad
+
             # VAE 인코딩
             with torch.no_grad():
                 element_ids = svg_tensor[:, :, 0]
                 command_ids = svg_tensor[:, :, 1]
                 continuous_params = svg_tensor[:, :, 2:]
-                
+
                 latents = vae.encode(
                     svg_element_ids=element_ids,
                     svg_command_ids=command_ids,
@@ -145,33 +181,32 @@ def train_dit(args):
                     pixel_features=pixel_emb,
                     svg_mask=svg_mask
                 )  # [B, L, latent_dim]
-            
-            # Classifier-Free Guidance (CFG) dropout
-            if torch.rand(1).item() < args.cfg_dropout:
-                # 10% 확률로 텍스트 컨텍스트를 0으로 (논문 기준)
-                text_context = torch.zeros_like(text_context)
-            
+
+            # Per-sample CFG dropout: 각 샘플별로 독립적으로 dropout
+            B_size = cond_context.size(0)
+            cfg_mask = torch.rand(B_size, device=device) < args.cfg_dropout  # [B], True=drop
+            text_context = torch.where(
+                cfg_mask[:, None, None].expand_as(cond_context),
+                uncond_context,
+                cond_context
+            )
+            text_mask = torch.where(
+                cfg_mask[:, None].expand_as(cond_mask),
+                uncond_mask,
+                cond_mask
+            )
+
             # Timestep 샘플링
             t = torch.randint(0, dit_config.noise_steps, (latents.size(0),), device=device)
-            
+
             # 노이즈 추가
-            noise = torch.randn_like(latents)
-            noisy_latents = diffusion.noise_latent(latents, noise, t)
-            
+            noisy_latents, noise = DiffusionUtils.noise_latent(latents, t, diff_params)
+
             # 노이즈 예측
-            predicted_noise = dit(
-                latent=noisy_latents,
-                timestep=t,
-                context=text_context,
-                latent_mask=svg_mask
-            )
-            
-            # Loss (MSE)
-            loss = nn.functional.mse_loss(predicted_noise, noise, reduction='none')
-            
-            # 마스크 적용
-            loss = loss * (~svg_mask).unsqueeze(-1).float()
-            loss = loss.sum() / (~svg_mask).sum()
+            predicted_noise = dit(noisy_latents, t, text_context, text_mask)
+
+            # Loss: simple MSE with reduction="mean" (no masking)
+            loss = nn.functional.mse_loss(predicted_noise, noise)
             
             # Backward
             optimizer.zero_grad()

@@ -39,7 +39,7 @@ class DiffusionUtils:
         }
     
     @staticmethod
-    def noise_latent(z0, t, diff_params, device):
+    def noise_latent(z0, t, diff_params):
         """
         잠재 벡터에 노이즈 추가
         
@@ -52,13 +52,10 @@ class DiffusionUtils:
             zt: 노이즈가 추가된 잠재 벡터
             epsilon: 추가된 노이즈
         """
-        z0 = z0.to(device)
-        t = t.to(device)
-        
         sqrt_alpha_bar = diff_params["sqrt_alphas_cumprod"][t].view(-1, 1, 1)
         sqrt_one_minus_alpha_bar = diff_params["sqrt_one_minus_alphas_cumprod"][t].view(-1, 1, 1)
-        
-        epsilon = torch.randn_like(z0, device=device)
+
+        epsilon = torch.randn_like(z0)
         zt = sqrt_alpha_bar * z0 + sqrt_one_minus_alpha_bar * epsilon
         
         return zt, epsilon

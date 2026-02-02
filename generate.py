@@ -1,183 +1,148 @@
-"""
-SVG 생성 스크립트 - 완전 구현
-"""
+import argparse
+from pathlib import Path
 
 import torch
-from pathlib import Path
-import argparse
-from transformers import CLIPTokenizer, CLIPTextModel
+import cairosvg
 
-from models import VPVAE, VSDiT
-from utils import DiffusionUtils
-from utils.svg_parser import SVGToTensor
-from config import VAEConfig, DiTConfig
+from models import VPVAE
+from config import VAEConfig
+from utils.tensorsvg import TensorToSVGHybrid
+from utils.hybrid_utils import compute_actual_len
 
 
-def generate_svg(args):
-    """SVG 생성"""
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
-    
-    # VAE 로드
-    print("Loading VAE...")
-    vae_checkpoint = torch.load(args.vae_checkpoint, map_location=device)
-    vae_config_dict = vae_checkpoint.get('config', {})
-    
-    vae_config = VAEConfig()
-    for k, v in vae_config_dict.items():
-        if hasattr(vae_config, k):
-            setattr(vae_config, k, v)
-    
-    vae = VPVAE(vae_config).to(device)
-    vae.load_state_dict(vae_checkpoint['model_state_dict'])
-    vae.eval()
-    print(f"Loaded VAE from: {args.vae_checkpoint}")
-    
-    # DiT 로드
-    print("Loading DiT...")
-    dit_checkpoint = torch.load(args.dit_checkpoint, map_location=device)
-    dit_config_dict = dit_checkpoint.get('config', {})
-    
-    dit_config = DiTConfig()
-    for k, v in dit_config_dict.items():
-        if hasattr(dit_config, k):
-            setattr(dit_config, k, v)
-    
-    dit = VSDiT(dit_config).to(device)
-    dit.load_state_dict(dit_checkpoint['model_state_dict'])
-    dit.eval()
-    print(f"Loaded DiT from: {args.dit_checkpoint}")
-    
-    # CLIP 텍스트 인코더
-    print("Loading CLIP...")
-    clip_tokenizer = CLIPTokenizer.from_pretrained(args.clip_model)
-    clip_text_encoder = CLIPTextModel.from_pretrained(args.clip_model).to(device)
-    clip_text_encoder.eval()
-    
-    # Diffusion 유틸리티
-    diffusion = DiffusionUtils(
-        noise_steps=dit_config.noise_steps,
-        beta_start=dit_config.beta_start,
-        beta_end=dit_config.beta_end
-    )
-    
-    # SVG 변환기
-    svg_converter = SVGToTensor(max_seq_len=vae_config.max_seq_len)
-    
-    # 출력 디렉토리
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 텍스트 임베딩
-    print(f"\nGenerating SVGs for prompt: '{args.prompt}'")
-    
+def safe_write_svg(converter, tensor, out_path, actual_len=None):
+    converter.tensor_to_svg_file(tensor=tensor, output_file=str(out_path), actual_len=actual_len)
+    try:
+        cairosvg.svg2png(url=str(out_path))
+        return True
+    except Exception:
+        return False
+
+
+def load_precomputed(precomputed_dir: str, max_files: int):
+    files = sorted(Path(precomputed_dir).glob("*.pt"))
+    if max_files and max_files > 0:
+        files = files[:max_files]
+    return files
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate reconstructions and samples from a VAE")
+    parser.add_argument("--ckpt_path", type=str, required=True, help="Checkpoint path")
+    parser.add_argument("--precomputed_dir", type=str, required=True, help="Cache directory")
+    parser.add_argument("--num_eval", type=int, default=10, help="Number of reconstructions")
+    parser.add_argument("--num_samples", type=int, default=10, help="Number of random samples")
+    parser.add_argument("--out_dir", type=str, default="outputs", help="Output directory")
+    parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"])
+    args = parser.parse_args()
+
+    device = torch.device(args.device)
+
+    ckpt = torch.load(args.ckpt_path, map_location=device)
+    config_dict = ckpt.get("config", {})
+    config = VAEConfig()
+    for k, v in config_dict.items():
+        if hasattr(config, k):
+            setattr(config, k, v)
+
+    model = VPVAE(
+        num_element_types=config.num_element_types,
+        num_command_types=config.num_command_types,
+        element_embed_dim=config.element_embed_dim,
+        command_embed_dim=config.command_embed_dim,
+        num_continuous_params=config.num_continuous_params,
+        pixel_feature_dim=config.pixel_embed_dim,
+        encoder_d_model=config.encoder_d_model,
+        decoder_d_model=config.decoder_d_model,
+        encoder_layers=config.encoder_layers,
+        decoder_layers=config.decoder_layers,
+        num_heads=config.num_heads,
+        latent_dim=config.latent_dim,
+        max_seq_len=config.max_seq_len,
+    ).to(device)
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
+
+    step_tag = "step"
+    if "step" in ckpt:
+        step_tag = f"step{ckpt['step']}"
+    elif "model_step" in Path(args.ckpt_path).stem:
+        step_tag = Path(args.ckpt_path).stem.replace("model_", "")
+
+    out_dir = Path(args.out_dir)
+    recon_dir = out_dir / "recon" / step_tag
+    sample_dir = out_dir / "samples" / step_tag
+    recon_dir.mkdir(parents=True, exist_ok=True)
+    sample_dir.mkdir(parents=True, exist_ok=True)
+
+    converter = TensorToSVGHybrid()
+
+    # Reconstructions
+    files = load_precomputed(args.precomputed_dir, args.num_eval)
+    if not files:
+        print("No precomputed files found.")
+        return
+
+    bad = 0
     with torch.no_grad():
-        # Conditional 텍스트 임베딩
-        text_inputs = clip_tokenizer(
-            [args.prompt] * args.num_samples,
-            padding=True,
-            truncation=True,
-            max_length=77,
-            return_tensors="pt"
-        ).to(device)
-        
-        text_outputs = clip_text_encoder(**text_inputs)
-        cond_context = text_outputs.last_hidden_state  # [num_samples, seq_len, D]
-        
-        # Unconditional 임베딩 (CFG용)
-        uncond_inputs = clip_tokenizer(
-            [""] * args.num_samples,
-            padding=True,
-            truncation=True,
-            max_length=77,
-            return_tensors="pt"
-        ).to(device)
-        
-        uncond_outputs = clip_text_encoder(**uncond_inputs)
-        uncond_context = uncond_outputs.last_hidden_state
-        
-        # 초기 노이즈
-        latent_shape = (args.num_samples, vae_config.max_seq_len, dit_config.latent_dim)
-        latents = torch.randn(latent_shape, device=device)
-        
-        # 마스크 (전체 valid)
-        latent_mask = torch.zeros((args.num_samples, vae_config.max_seq_len), 
-                                 dtype=torch.bool, device=device)
-        
-        print(f"Starting DDIM sampling ({args.ddim_steps} steps, CFG scale: {args.cfg_scale})...")
-        
-        # DDIM 샘플링
-        latents = diffusion.ddim_sample(
-            model=dit,
-            latent_shape=latent_shape,
-            conditional_context=cond_context,
-            unconditional_context=uncond_context,
-            cfg_scale=args.cfg_scale,
-            ddim_steps=args.ddim_steps,
-            eta=args.eta,
-            latent_mask=latent_mask,
-            device=device
-        )
-        
-        print("Decoding latents to SVG tensors...")
-        
-        # VAE 디코딩
-        outputs = vae.decode(latents)
+        for i, fpath in enumerate(files):
+            payload = torch.load(fpath, map_location="cpu")
+            svg_tensor = payload["full_svg_matrix_content"].long()
+            pixel_cls = payload["final_pixel_cls_token"].float().view(1, -1)
 
-        # 텐서를 SVG 파일로 변환
-        print(f"Saving SVG files to {output_dir}...")
+            seq_len = svg_tensor.shape[0]
+            pixel_seq = pixel_cls.repeat(seq_len, 1).unsqueeze(0).to(device)
+            svg_tensor_b = svg_tensor.unsqueeze(0).to(device)
+            svg_mask = torch.zeros((1, seq_len), dtype=torch.bool, device=device)
+
+            element_ids = svg_tensor_b[:, :, 0]
+            command_ids = svg_tensor_b[:, :, 1]
+            continuous_params = svg_tensor_b[:, :, 2:]
+
+            outputs = model(
+                svg_element_ids=element_ids,
+                svg_command_ids=command_ids,
+                svg_continuous_params=continuous_params,
+                pixel_features=pixel_seq,
+                svg_mask=svg_mask,
+            )
+
+            pred = outputs["predicted_features"]
+            elem_ids, cmd_ids, params = model.denormalize_output(pred)
+            recon_tensor = torch.cat(
+                [elem_ids.unsqueeze(-1), cmd_ids.unsqueeze(-1), params], dim=-1
+            ).squeeze(0).cpu()
+
+            actual_len = compute_actual_len(svg_tensor)
+            orig_path = recon_dir / f"original_{i:03d}.svg"
+            recon_path = recon_dir / f"recon_{i:03d}.svg"
+
+            ok1 = safe_write_svg(converter, svg_tensor, orig_path, actual_len=actual_len)
+            ok2 = safe_write_svg(converter, recon_tensor, recon_path, actual_len=actual_len)
+            if not ok1 or not ok2:
+                bad += 1
+
+    # Random sampling
+    with torch.no_grad():
+        z = torch.randn(
+            args.num_samples, config.max_seq_len, config.latent_dim, device=device
+        )
+        pred = model.decode(z)
+        elem_ids, cmd_ids, params = model.denormalize_output(pred)
+        sample_tensor = torch.cat(
+            [elem_ids.unsqueeze(-1), cmd_ids.unsqueeze(-1), params], dim=-1
+        ).cpu()
 
         for i in range(args.num_samples):
-            # 각 예측에서 가장 높은 확률의 값 선택
-            element_ids = outputs['element_logits'][i].argmax(dim=-1)  # [L]
-            command_ids = outputs['command_logits'][i].argmax(dim=-1)  # [L]
-            # param_logits: [B, L, 12, 256] -> argmax -> [L, 12]
-            param_values = outputs['param_logits'][i].argmax(dim=-1)  # [L, 12]
-            
-            # SVG 텐서 구성
-            svg_tensor = torch.cat([
-                element_ids.unsqueeze(-1),
-                command_ids.unsqueeze(-1),
-                param_values
-            ], dim=-1)  # [L, 14]
-            
-            # 파일명
-            prompt_slug = args.prompt.replace(' ', '_')[:30]
-            output_file = output_dir / f"{prompt_slug}_sample{i+1}.svg"
-            
-            # SVG 저장
-            try:
-                svg_converter.tensor_to_svg(
-                    tensor=svg_tensor,
-                    output_file=str(output_file),
-                    width=512,
-                    height=512
-                )
-                print(f"  Saved: {output_file}")
-            except Exception as e:
-                print(f"  Error saving {output_file}: {e}")
-    
-    print(f"\nGeneration complete! {args.num_samples} SVG files saved to {output_dir}")
+            out_path = sample_dir / f"sample_{i:03d}.svg"
+            ok = safe_write_svg(converter, sample_tensor[i], out_path)
+            if not ok:
+                bad += 1
+
+    print(
+        f"Done. recon_dir={recon_dir} sample_dir={sample_dir} bad_svgs={bad}"
+    )
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate SVG from text")
-    
-    # 모델 체크포인트
-    parser.add_argument('--vae_checkpoint', type=str, required=True, help='VAE checkpoint path')
-    parser.add_argument('--dit_checkpoint', type=str, required=True, help='DiT checkpoint path')
-    parser.add_argument('--clip_model', type=str, default='openai/clip-vit-base-patch32', help='CLIP model')
-    
-    # 생성 파라미터
-    parser.add_argument('--prompt', type=str, required=True, help='Text prompt')
-    parser.add_argument('--num_samples', type=int, default=4, help='Number of samples to generate')
-    parser.add_argument('--cfg_scale', type=float, default=7.0, help='Classifier-free guidance scale')
-    parser.add_argument('--ddim_steps', type=int, default=100, help='Number of DDIM steps')
-    parser.add_argument('--eta', type=float, default=0.0, help='DDIM eta (0=deterministic)')
-    
-    # 출력
-    parser.add_argument('--output_dir', type=str, default='outputs', help='Output directory')
-    
-    args = parser.parse_args()
-    
-    generate_svg(args)
+    main()
