@@ -1,14 +1,21 @@
 ﻿#!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="/mnt/8TB_1/jiwoo/projects/svg_smoke/svg_fusion"
-CACHE="/mnt/8TB_1/jiwoo/projects/svg_smoke/precomputed_patch_tokens_data"
-VAE_CKPT="/mnt/8TB_1/jiwoo/checkpoints/model_step300.pt"
-DIT_CKPT="/mnt/8TB_1/jiwoo/checkpoints/dit_v2/vsdit_final.pt"
-OUT="/mnt/8TB_1/jiwoo/outputs"
+ROOT="${ROOT_DIR:-/mnt/8TB_1/jiwoo/projects/svg_smoke/svg_fusion}"
+CACHE="${CACHE_DIR:-/mnt/8TB_1/jiwoo/projects/svg_smoke/precomputed_patch_tokens_data}"
+VAE_CKPT="${VAE_CKPT:-/mnt/8TB_1/jiwoo/checkpoints/model_step300.pt}"
+DIT_CKPT="${DIT_CKPT:-/mnt/8TB_1/jiwoo/checkpoints/dit_v2/vsdit_final.pt}"
+OUT="${OUT_DIR:-/mnt/8TB_1/jiwoo/outputs}"
+
+if [ ! -d "$OUT" ]; then
+  OUT="outputs"
+fi
+
+REPORT="$OUT/inspect_report.txt"
 
 cd "$ROOT"
 
+{
 echo "== [1] Precomputed cache (one sample) =="
 python - <<'EOF'
 import torch, glob
@@ -106,3 +113,6 @@ EOF
 echo "== [4] Outputs =="
 ls "$OUT" | head || true
 ls "$OUT" | grep dit_sample | head || true
+} | tee "$REPORT"
+
+echo "Saved report: $REPORT"
