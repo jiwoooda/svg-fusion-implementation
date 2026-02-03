@@ -43,6 +43,7 @@ svg_fusion/
     train.py              스모크 테스트용 VAE 학습
     generate.py           재구성/랜덤 샘플 생성 (스모크 테스트용)
     generate_dit.py       DiT+VAE 텍스트 조건 샘플링
+    inspect_outputs.sh    입력/출력 형태 및 통계 리포트 생성
     download_twemoji.py   Twemoji SVG 데이터 다운로드
     train_vae.py          VP-VAE 학습
     train_dit.py          VS-DiT 학습
@@ -107,6 +108,16 @@ python scripts/generate.py \
   --num_samples 10 \
   --out_dir ./outputs
 ```
+
+입/출력 형태 점검(리포트 생성):
+
+```bash
+bash scripts/inspect_outputs.sh
+```
+
+생성 리포트:
+- `outputs/inspect_report.txt`
+- 요약 문서: `docs/output_shape_summary.md`
 
 ## 기존 학습 (선택)
 
@@ -199,3 +210,4 @@ python scripts/generate_dit.py \
 - `scripts/train_demo.py`는 더미 데이터로 소규모 데모 학습을 수행합니다.
 - `scripts/prepare_latents.py`는 디퓨전 학습용 VAE 잠재값을 미리 계산할 때 사용합니다.
 - `scripts/generate.py`는 DDIM 샘플링과 CLIP 텍스트 조건을 사용합니다.
+- `scripts/inspect_outputs.sh`는 캐시/인코더(mu/log_var)/디코더/DiT 출력의 shape 및 통계를 기록합니다.
