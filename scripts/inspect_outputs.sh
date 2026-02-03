@@ -27,7 +27,7 @@ print("final_pixel_cls_token:", d["final_pixel_cls_token"].shape, d["final_pixel
 print("caption:", d.get("caption"))
 EOF
 
-echo "== [2] VAE output shape/range =="
+echo "== [2] VAE output shape/range (mu/log_var 포함) =="
 python - <<'EOF'
 import torch, glob
 from models import VPVAE
@@ -69,7 +69,11 @@ out = vae(
 )
 
 pred = out["predicted_features"]
+mu = out["mu"]
+log_var = out["log_var"]
 print("predicted_features:", pred.shape, float(pred.min()), float(pred.max()))
+print("mu:", mu.shape, float(mu.mean()), float(mu.std()))
+print("log_var:", log_var.shape, float(log_var.mean()), float(log_var.std()))
 print("kl_loss:", float(out["kl_loss"]))
 EOF
 
