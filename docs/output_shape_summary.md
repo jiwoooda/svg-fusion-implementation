@@ -1,26 +1,36 @@
-﻿# Output Shape Summary
+# 출력 형태 요약 (실측 예시 반영)
 
-## Cache Sample
-- svg_tensor shape: [3, 14]
-- first row: all zeros (likely BOS/PAD or very short sample)
-- pixel_cls shape: [384]
-- caption: None (cache created before caption feature)
+아래 값들은 실제 실행 로그에서 확인한 **예시 출력**입니다.
 
-## VAE Output
-- predicted_features shape: [3, 14]
-- value range: roughly [-1, 1] (tanh output)
-- row0 sample (first 6 values): [0.25, -0.45, -0.99, ...]
+## 1) Cache Sample (전처리 캐시)
+- `svg_tensor shape`: `torch.Size([3, 14])`
+- `first row`: `[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]`
+- `pixel_cls shape`: `torch.Size([384])`
+- `pixel_cls first 8`: `[-1.4972361326217651, 1.5802251100540161, -2.6602163314819336, -1.1705482006072998, -4.24473762512207, -0.6569913029670715, 2.362555742263794, -0.7623689770698547]`
+- `caption`: `None` (캡션 기능 추가 전 캐시라 비어 있음)
 
-## DiT Output
-- pred_noise shape: [1, 1024, 128]
-- values are unconstrained (noise prediction)
+## 2) VAE Output (디코더 출력)
+- `pred shape`: `torch.Size([3, 14])`
+- `pred row0 first 6`: `[0.25431376695632935, -0.4523492753505707, -0.9999324679374695, -0.9944559986886707, -0.9964877367019653, -0.9983543496704102]`
 
-## Files Generated
-- outputs/dit_sample_*.svg
-- outputs/dit_sample_*.svg.png
-- outputs/recon/*
-- outputs/samples/*
+설명:
+- 값 범위는 `tanh` 출력이므로 **[-1, 1]** 근처입니다.
+- `[3, 14]`는 “시퀀스 길이 3, 토큰당 14차원(2 + 12 params)”을 의미합니다.
 
-## Notes
-- Captions were None because the cache was generated before caption mapping was added.
-- To include captions, rerun preprocess after updating code.
+## 3) DiT Output (노이즈 예측)
+- `pred_noise shape`: `torch.Size([1, 1024, 128])`
+- `pred_noise[0,0,:6]`: `[-0.8920856714248657, 0.9532657861709595, 0.4404146671295166, -0.4748469293117523, -0.8231120705604553, -0.7520685195922852]`
+
+설명:
+- DiT는 **노이즈(ε)를 예측**하므로 값 범위 제한이 없습니다.
+- `1024`는 고정 시퀀스 길이, `128`은 latent_dim입니다.
+
+## 4) 생성 파일
+- `outputs/dit_sample_*.svg`
+- `outputs/dit_sample_*.svg.png`
+- `outputs/recon/*`
+- `outputs/samples/*`
+
+## 참고
+- `caption: None`은 **이 캐시가 캡션 생성 추가 전**에 만들어졌다는 의미입니다.
+- 캡션 포함 캐시를 쓰려면 `preprocess`를 최신 코드로 **다시 실행**해야 합니다.
